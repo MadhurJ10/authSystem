@@ -20,7 +20,8 @@ export const register = async (req, res) => {
         const user = await userModel.create({
             name,
             email,
-            password: hashedPassword
+            password: hashedPassword,
+            // role:'admin'
         })
         return res.json({
             status: 201,
@@ -40,12 +41,11 @@ export const login = async (req, res) => {
     try {
         const user = await userModel.findOne({
             email
-        })
+        });
 
-        console.log(user.password)
+        // console.log(user.password)
 
         const check = await comparePassword(password, user.password);
-        console.log(check);
         if (!check) {
             return res.json({
                 msg: "invalid credentials"
@@ -53,10 +53,12 @@ export const login = async (req, res) => {
         }
         const token = await jwt.sign({ id: user._id, role: 'user' }, 'madhur')
 
+        const { password: _, ...userData } = user.toObject();
+
         return res.json({
             msg: "login succesful",
             token: token,
-            user
+            userData
         })
     } catch (error) {
         console.log(error)
@@ -155,4 +157,12 @@ export const resetPassword = async (req, res) => {
         return res.status(500).json({ msg: "Invalid or expired token" });
     }
 
+}
+
+export const getData = async (req, res) => {
+    const { user } = req
+    res.json({
+        msg: 'admin only access granted',
+        user
+    })
 }
