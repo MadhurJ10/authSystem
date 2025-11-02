@@ -2,7 +2,8 @@ import jwt from "jsonwebtoken";
 import userModel from "../models/user.model.js"
 import { hashPassword, comparePassword } from "../utils/hash.js";
 
-
+const JWT_SECRET = process.env.JWT_SECRET;
+const PORT = process.env.PORT;
 
 export const register = async (req, res) => {
     const { name, email, password } = req.body
@@ -36,14 +37,16 @@ export const register = async (req, res) => {
 
 
 export const login = async (req, res) => {
+    console.log(JWT_SECRET)
+    console.log(PORT);
     const { email, password } = req.body
-    // console.log(email)
+    console.log(email)
     try {
         const user = await userModel.findOne({
             email
         });
 
-        // console.log(user.password)
+        console.log(user.password)
 
         const check = await comparePassword(password, user.password);
         if (!check) {
@@ -51,7 +54,7 @@ export const login = async (req, res) => {
                 msg: "invalid credentials"
             })
         }
-        const token = await jwt.sign({ id: user._id, role: 'user' }, 'madhur')
+        const token = await jwt.sign({ id: user._id, role: 'user' }, JWT_SECRET)
 
         const { password: _, ...userData } = user.toObject();
 
@@ -115,7 +118,7 @@ export const forgotPassword = async (req, res) => {
 
         const token = jwt.sign(
             { id: user._id },
-            'madhur',
+            JWT_SECRET,
             { expiresIn: '15m' }
         )
 
@@ -138,7 +141,7 @@ export const resetPassword = async (req, res) => {
             return res.status(400).json({ msg: "New password is required" });
         }
 
-        const decode = jwt.verify(token, 'madhur');
+        const decode = jwt.verify(token, JWT_SECRET);
 
         const user = await userModel.findById(decode.id);
         if (!user) {
