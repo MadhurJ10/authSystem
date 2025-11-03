@@ -1,20 +1,25 @@
 import jwt from "jsonwebtoken";
-import userModel from "../models/user.model.js"
+import userModel from "../models/user.model.js";
+import blacklistTokenModel from "../models/blacklistedToken.model.js";
 import { hashPassword, comparePassword } from "../utils/hash.js";
+import { successResponse, errorResponse } from "../utils/response.js";
+import { generateToken } from "../utils/token.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
-const PORT = process.env.PORT;
 
+
+if (!JWT_SECRET) {
+    throw new Error("Missing JWT_SECRET in environment variables");
+}
+
+//register endpoint
 export const register = async (req, res) => {
-    const { name, email, password } = req.body
+    const { name, email, password, role } = req.body;
+
     try {
         const existingUser = await userModel.findOne({ email });
-
         if (existingUser) {
-            console.log("User already exists");
-            return res.status(400).json({
-                msg: "User already exists",
-            });
+            return errorResponse(res, 400, "User already exists");
         }
 
         const hashedPassword = await hashPassword(password);
@@ -22,150 +27,160 @@ export const register = async (req, res) => {
             name,
             email,
             password: hashedPassword,
-            // role:'admin'
-        })
-        return res.json({
-            status: 201,
-            msg: "User registered successfully",
-            data: { id: user._id, name: user.name, email: user.email },
-        })
-    } catch (error) {
-        console.error("Service Error:", error);
-        return { status: 500, msg: "Failed to register user" };
-    }
-}
-
-
-export const login = async (req, res) => {
-    console.log(JWT_SECRET)
-    console.log(PORT);
-    const { email, password } = req.body
-    console.log(email)
-    try {
-        const user = await userModel.findOne({
-            email
+            role
         });
 
-        console.log(user.password)
+        const token = await generateToken({ id: user._id, role: user.role }, "1h");
 
-        const check = await comparePassword(password, user.password);
-        if (!check) {
-            return res.json({
-                msg: "invalid credentials"
-            })
-        }
-        const token = await jwt.sign({ id: user._id, role: 'user' }, JWT_SECRET)
-
-        const { password: _, ...userData } = user.toObject();
-
-        return res.json({
-            msg: "login succesful",
-            token: token,
-            userData
-        })
-    } catch (error) {
-        console.log(error)
-    }
-}
-
-export const changePassword = async (req, res) => {
-    try {
-        const { password, newPassword } = req.body;
-        const { user } = req; // middleware must set req.user = decoded token payload
-
-        // 1️⃣ Validate input
-        if (!password || !newPassword) {
-            return res.status(400).json({ msg: "Both old and new passwords are required" });
-        }
-
-        // 2️⃣ Find user
-        const existingUser = await userModel.findById(user.id);
-        if (!existingUser) {
-            return res.status(404).json({ msg: "User not found" });
-        }
-
-        // 3️⃣ Compare old password
-        const isMatch = await comparePassword(password, existingUser.password);
-        if (!isMatch) {
-            return res.status(400).json({ msg: "Incorrect old password" });
-        }
-
-        // 4️⃣ Prevent same password reuse
-        const isSamePassword = await comparePassword(newPassword, existingUser.password);
-        if (isSamePassword) {
-            return res.status(400).json({ msg: "New password cannot be the same as the old password" });
-        }
-
-        // 5️⃣ Hash and update new password
-        existingUser.password = await hashPassword(newPassword);
-        await existingUser.save();
-
-        return res.status(200).json({ msg: "Password changed successfully" });
-    } catch (error) {
-        console.error("Error changing password:", error);
-        return res.status(500).json({ msg: "Internal server error" });
-    }
-};
-
-export const forgotPassword = async (req, res) => {
-    const { email } = req.body
-    try {
-        const user = await userModel.findOne({ email });
-
-        if (!user) {
-            return res.res.status(404).json({ msg: "User not found" });
-        }
-
-        const token = jwt.sign(
-            { id: user._id },
-            JWT_SECRET,
-            { expiresIn: '15m' }
-        )
-
-        return res.status(200).json({
-            msg: "Password reset link generated",
+        return successResponse(res, 201, "User registered successfully", {
+            id: user._id,
+            name: user.name,
+            email: user.email,
             token
         });
     } catch (error) {
-        console.error("Error in forgotPassword:", error);
-        return res.status(500).json({ msg: "Internal server error" });
+        console.error("Register Error:", error);
+        return errorResponse(res, 500, "Failed to register user");
     }
-}
+};
 
+//login endpoint
+export const login = async (req, res) => {
+    const { email, password } = req.body;
+
+    try {
+        const user = await userModel.findOne({ email });
+        if (!user) {
+            return errorResponse(res, 404, "User not found");
+        }
+
+        const isPasswordValid = await comparePassword(password, user.password);
+        if (!isPasswordValid) {
+            return errorResponse(res, 401, "Invalid credentials");
+        }
+
+        const token = generateToken({ id: user._id, role: "user" }, "1h");
+        const { password: _, ...userData } = user.toObject();
+
+        return successResponse(res, 200, "Login successful", { token, userData });
+    } catch (error) {
+        console.error("Login Error:", error);
+        return errorResponse(res, 500, "Login failed");
+    }
+};
+
+//CHANGE PASSWORD ENDPOINT
+export const changePassword = async (req, res) => {
+    try {
+        const { password, newPassword } = req.body;
+        const { user } = req; // comes from auth middleware
+
+        if (!password || !newPassword) {
+            return errorResponse(res, 400, "Both old and new passwords are required");
+        }
+
+        const existingUser = await userModel.findById(user.id);
+        if (!existingUser) {
+            return errorResponse(res, 404, "User not found");
+        }
+
+        const isMatch = await comparePassword(password, existingUser.password);
+        if (!isMatch) {
+            return errorResponse(res, 400, "Incorrect old password");
+        }
+
+        const isSamePassword = await comparePassword(
+            newPassword,
+            existingUser.password
+        );
+        if (isSamePassword) {
+            return errorResponse(res, 400, "New password cannot be the same as old password");
+        }
+
+        existingUser.password = await hashPassword(newPassword);
+        await existingUser.save();
+
+        return successResponse(res, 200, "Password changed successfully");
+    } catch (error) {
+        console.error("Change Password Error:", error);
+        return errorResponse(res, 500, "Internal server error");
+    }
+};
+
+// FORGOT PASSWORD ENDPOINT
+export const forgotPassword = async (req, res) => {
+    const { email } = req.body;
+
+    try {
+        const user = await userModel.findOne({ email });
+        if (!user) {
+            return errorResponse(res, 404, "User not found");
+        }
+
+        const token = generateToken({ id: user._id }, "15m");
+        return successResponse(res, 200, "Password reset link generated", { token });
+    } catch (error) {
+        console.error("Forgot Password Error:", error);
+        return errorResponse(res, 500, "Internal server error");
+    }
+};
+
+//RESET PASSWORD ENDPOINT
+// NOTE: In a real-world app, this token would be emailed to the user.
+// For this assignment/demo, we are just returning the token in the response.
 export const resetPassword = async (req, res) => {
     const { token } = req.params;
-    const { newPassword } = req.body
+    const { newPassword } = req.body;
 
     try {
         if (!newPassword) {
-            return res.status(400).json({ msg: "New password is required" });
+            return errorResponse(res, 400, "New password is required");
         }
 
-        const decode = jwt.verify(token, JWT_SECRET);
-
-        const user = await userModel.findById(decode.id);
+        const decoded = jwt.verify(token, JWT_SECRET);
+        const user = await userModel.findById(decoded.id);
         if (!user) {
-            return res.status(404).json({ msg: "User not found" });
+            return errorResponse(res, 404, "User not found");
         }
 
         user.password = await hashPassword(newPassword);
         await user.save();
 
-        return res.status(200).json({ msg: "Password reset successful" });
+        return successResponse(res, 200, "Password reset successful");
     } catch (error) {
-        console.error("Error in resetPassword:", error);
+        console.error("Reset Password Error:", error);
         if (error.name === "TokenExpiredError") {
-            return res.status(400).json({ msg: "Reset link expired" });
+            return errorResponse(res, 400, "Reset link expired");
         }
-        return res.status(500).json({ msg: "Invalid or expired token" });
+        return errorResponse(res, 400, "Invalid or expired token");
     }
+};
 
-}
-
+// GET DATA ENDPOINT
 export const getData = async (req, res) => {
-    const { user } = req
-    res.json({
-        msg: 'admin only access granted',
-        user
-    })
-}
+    return successResponse(res, 200, "Admin-only access granted", req.user);
+};
+
+/* ------------------------------ LOGOUT ------------------------------ */
+export const logout = async (req, res) => {
+    try {
+        const token = req.token;
+        if (!token) return errorResponse(res, 400, "No token provided");
+
+        const decoded = jwt.decode(token);
+        if (!decoded || !decoded.exp)
+            return errorResponse(res, 400, "Invalid token format");
+
+        const expiresAt = new Date(decoded.exp * 1000);
+        await blacklistTokenModel.create({ token, expiresAt });
+
+        return successResponse(
+            res,
+            200,
+            `${req.user?.name || "User"} logged out successfully`
+        );
+    } catch (error) {
+        console.error("Logout Error:", error);
+        return errorResponse(res, 500, "Logout failed. Please try again later.");
+    }
+};
