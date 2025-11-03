@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import Joi from "joi";
 import userModel from "../models/user.model.js";
 import blacklistTokenModel from "../models/blacklistedToken.model.js";
 import { hashPassword, comparePassword } from "../utils/hash.js";
@@ -7,13 +8,40 @@ import { generateToken } from "../utils/token.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
-
 if (!JWT_SECRET) {
     throw new Error("Missing JWT_SECRET in environment variables");
 }
 
+const registerSchema = Joi.object({
+    name: Joi.string().min(2).max(50).required(),
+    email: Joi.string().email().required(),
+    password: Joi.string().min(6).max(128).required(),
+    role: Joi.string().valid("user", "admin").default("user"),
+});
+
+const loginSchema = Joi.object({
+    email: Joi.string().email().required(),
+    password: Joi.string().min(6).required(),
+});
+
+const changePasswordSchema = Joi.object({
+    password: Joi.string().min(6).required(),
+    newPassword: Joi.string().min(6).required(),
+});
+
+const forgotPasswordSchema = Joi.object({
+    email: Joi.string().email().required(),
+});
+
+const resetPasswordSchema = Joi.object({
+    newPassword: Joi.string().min(6).required(),
+});
+
 //register endpoint
 export const register = async (req, res) => {
+    const { error } = registerSchema.validate(req.body);
+    if (error) return errorResponse(res, 400, error.details[ 0 ].message);
+
     const { name, email, password, role } = req.body;
 
     try {
@@ -46,6 +74,9 @@ export const register = async (req, res) => {
 
 //login endpoint
 export const login = async (req, res) => {
+    const { error } = loginSchema.validate(req.body);
+    if (error) return errorResponse(res, 400, error.details[ 0 ].message);
+
     const { email, password } = req.body;
 
     try {
@@ -59,7 +90,7 @@ export const login = async (req, res) => {
             return errorResponse(res, 401, "Invalid credentials");
         }
 
-        const token = generateToken({ id: user._id, role: "user" }, "1h");
+        const token = generateToken({ id: user._id, role: user.role }, "1h");
         const { password: _, ...userData } = user.toObject();
 
         return successResponse(res, 200, "Login successful", { token, userData });
@@ -71,13 +102,12 @@ export const login = async (req, res) => {
 
 //CHANGE PASSWORD ENDPOINT
 export const changePassword = async (req, res) => {
+    const { error } = changePasswordSchema.validate(req.body);
+    if (error) return errorResponse(res, 400, error.details[ 0 ].message);
+
     try {
         const { password, newPassword } = req.body;
         const { user } = req; // comes from auth middleware
-
-        if (!password || !newPassword) {
-            return errorResponse(res, 400, "Both old and new passwords are required");
-        }
 
         const existingUser = await userModel.findById(user.id);
         if (!existingUser) {
@@ -109,6 +139,9 @@ export const changePassword = async (req, res) => {
 
 // FORGOT PASSWORD ENDPOINT
 export const forgotPassword = async (req, res) => {
+    const { error } = forgotPasswordSchema.validate(req.body);
+    if (error) return errorResponse(res, 400, error.details[ 0 ].message);
+
     const { email } = req.body;
 
     try {
@@ -129,6 +162,9 @@ export const forgotPassword = async (req, res) => {
 // NOTE: In a real-world app, this token would be emailed to the user.
 // For this assignment/demo, we are just returning the token in the response.
 export const resetPassword = async (req, res) => {
+    const { error } = resetPasswordSchema.validate(req.body);
+    if (error) return errorResponse(res, 400, error.details[ 0 ].message);
+
     const { token } = req.params;
     const { newPassword } = req.body;
 
@@ -161,7 +197,7 @@ export const getData = async (req, res) => {
     return successResponse(res, 200, "Admin-only access granted", req.user);
 };
 
-/* ------------------------------ LOGOUT ------------------------------ */
+//LOGOUT ENDPOINT
 export const logout = async (req, res) => {
     try {
         const token = req.token;
